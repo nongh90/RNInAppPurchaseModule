@@ -71,6 +71,11 @@
   return dispatch_get_main_queue();
 }
 
++ (BOOL)requiresMainQueueSetup
+{
+  return YES;  // only do this if your module initialization relies on calling UIKit!
+}
+
 RCT_EXPORT_MODULE()
 /**
  *  添加商品购买状态监听
@@ -100,14 +105,23 @@ RCT_EXPORT_METHOD(removePurchase:(NSDictionary *)purchase) {
   [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-- (NSDictionary *)constantsToExport
-{
+//- (NSDictionary *)constantsToExport
+//{
+//  // 获取当前缓存的所有凭证
+//  NSMutableArray *iapUnverifyOrdersArray = [NSMutableArray array];
+//  if ([[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders] != nil) {
+//    [iapUnverifyOrdersArray addObjectsFromArray:[[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders]];
+//  }
+//  return @{ @"iapUnverifyOrdersArray": iapUnverifyOrdersArray };
+//}
+
+RCT_EXPORT_METHOD(getUnverifyOrdersArray:(RCTResponseSenderBlock)callback){
   // 获取当前缓存的所有凭证
   NSMutableArray *iapUnverifyOrdersArray = [NSMutableArray array];
   if ([[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders] != nil) {
     [iapUnverifyOrdersArray addObjectsFromArray:[[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders]];
   }
-  return @{ @"iapUnverifyOrdersArray": iapUnverifyOrdersArray };
+  callback(@[[NSNull null], iapUnverifyOrdersArray]);
 }
 
 /**
@@ -117,6 +131,7 @@ RCT_EXPORT_METHOD(removePurchase:(NSDictionary *)purchase) {
  *        callback： 回调，返回
  */
 RCT_EXPORT_METHOD(purchaseProduct:(NSString *)productIdentifier
+                  amount: (int) amount
                   callback:(RCTResponseSenderBlock)callback)
 {
   SKProduct *product;
@@ -129,9 +144,17 @@ RCT_EXPORT_METHOD(purchaseProduct:(NSString *)productIdentifier
   }
   
   if(product) {
-    SKPayment *payment = [SKPayment paymentWithProduct:product];
-    [[SKPaymentQueue defaultQueue] addPayment:payment];
-    _callbacks[RCTKeyForInstance(payment.productIdentifier)] = callback;
+    if(amount && amount > 1){//一次购买多个商品
+      SKMutablePayment *payment = [SKMutablePayment paymentWithProduct:product];
+      payment.quantity = amount;
+      [[SKPaymentQueue defaultQueue] addPayment:payment];
+      _callbacks[RCTKeyForInstance(payment.productIdentifier)] = callback;
+    }else{
+      SKPayment *payment = [SKPayment paymentWithProduct:product];
+      [[SKPaymentQueue defaultQueue] addPayment:payment];
+      _callbacks[RCTKeyForInstance(payment.productIdentifier)] = callback;
+    }
+    
   } else {
     callback(@[@"无效商品"]);
   }
@@ -260,13 +283,13 @@ RCT_EXPORT_METHOD(loadProducts:(NSArray *)productIdentifiers
                                @"receiptData": transactionReceiptString
                                };
     // 将凭证缓存，后台验证结束后再删除
-    NSMutableArray *iapUnverifyOrdersArray = [NSMutableArray array];
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders] != nil) {
-      [iapUnverifyOrdersArray addObjectsFromArray:[[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders]];
-    }
-    [iapUnverifyOrdersArray addObject:purchase];
-    [[NSUserDefaults standardUserDefaults] setObject:[iapUnverifyOrdersArray copy] forKey:kIapUnverifyOrders];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+//    NSMutableArray *iapUnverifyOrdersArray = [NSMutableArray array];
+//    if ([[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders] != nil) {
+//      [iapUnverifyOrdersArray addObjectsFromArray:[[NSUserDefaults standardUserDefaults] objectForKey:kIapUnverifyOrders]];
+//    }
+//    [iapUnverifyOrdersArray addObject:purchase];
+//    [[NSUserDefaults standardUserDefaults] setObject:[iapUnverifyOrdersArray copy] forKey:kIapUnverifyOrders];
+//    [[NSUserDefaults standardUserDefaults] synchronize];
     
     callback(@[[NSNull null], purchase]);
     [_callbacks removeObjectForKey:key];
@@ -318,10 +341,10 @@ restoreCompletedTransactionsFailedWithError:(NSError *)error
     for(SKProduct *item in response.products) {
       NSDictionary *product = @{
                                 @"identifier": item.productIdentifier,
-                                @"priceString": item.priceString,
+                                @"priceString": item.priceString ? item.priceString : @"",
                                 @"downloadable": item.downloadable ? @"true" : @"false" ,
-                                @"description": item.localizedDescription,
-                                @"title": item.localizedTitle,
+                                @"description": item.localizedDescription ? item.localizedDescription : @"",//如果直接取 locallizedDescription, 没有值的时候会崩溃
+                                @"title": item.localizedTitle ? item.localizedTitle : @"",
                                 };
       [productsArrayForJS addObject:product];
     }
@@ -330,6 +353,9 @@ restoreCompletedTransactionsFailedWithError:(NSError *)error
   } else {
     RCTLogWarn(@"No callback registered for load product request.");
   }
+}
+
+- (void)request:(SKRequest *)request didFailWithError:(NSError *)error{
 }
 
 - (void)dealloc
